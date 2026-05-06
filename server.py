@@ -149,112 +149,221 @@ class Handler(BaseHTTPRequestHandler):
 # ----------------------------------------------------------------- dashboard
 
 DASHBOARD = """<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Piezolytics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&family=Lora:ital,wght@0,600;1,400&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         background: #0f1117; color: #e0e0e0; padding: 24px; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:         #f5f1e6;
+  --card:       #fffcf5;
+  --fg:         #4a3f35;
+  --fg-muted:   #7d6b56;
+  --border:     #dbd0ba;
+  --muted:      #ece5d8;
+  --accent:     #d4c8aa;
+  --primary:    #a67c52;
+  --primary-lt: #c0a080;
+  --shadow:     rgba(40,28,20,0.11);
+  --serif:      'Libre Baskerville', Georgia, serif;
+  --display:    'Lora', Georgia, serif;
+  --mono:       'IBM Plex Mono', 'Courier New', monospace;
+}
+body { font-family: var(--serif); background: var(--bg); color: var(--fg); min-height: 100vh; }
 
-  h1 { font-size: 22px; font-weight: 600; color: #fff; margin-bottom: 4px; }
-  .subtitle { font-size: 13px; color: #666; margin-bottom: 20px; }
+/* Header */
+.header {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 18px 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 4px var(--shadow);
+  position: sticky; top: 0; z-index: 10;
+}
+.logo { font-family: var(--display); font-size: 22px; font-weight: 600; color: var(--fg); letter-spacing: -0.01em; }
+.logo em { color: var(--primary); font-style: normal; }
+.tagline { font-family: var(--serif); font-style: italic; font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.live-pill {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--muted); border: 1px solid var(--border);
+  border-radius: 100px; padding: 5px 14px;
+  font-family: var(--mono); font-size: 11px; color: var(--fg-muted);
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0; transition: background 0.4s;
+}
+.live-dot.on { background: var(--primary); box-shadow: 0 0 0 3px rgba(166,124,82,0.18); animation: breathe 2.5s ease-in-out infinite; }
+@keyframes breathe {
+  0%,100% { box-shadow: 0 0 0 3px rgba(166,124,82,0.18); }
+  50%      { box-shadow: 0 0 0 6px rgba(166,124,82,0.06); }
+}
+.btn {
+  font-family: var(--serif); font-size: 12px;
+  background: var(--card); color: var(--fg-muted);
+  border: 1px solid var(--border); padding: 7px 16px; border-radius: 4px;
+  cursor: pointer; box-shadow: 1px 2px 3px var(--shadow); transition: background 0.15s, color 0.15s;
+}
+.btn:hover { background: var(--muted); color: var(--fg); }
 
-  .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3ecf8e;
-         box-shadow: 0 0 6px #3ecf8e; animation: pulse 2s infinite; flex-shrink: 0; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-  .status-text { font-size: 13px; color: #666; flex: 1; }
-  button { background: #1a1d27; color: #aaa; border: 1px solid #2a2d3a;
-           padding: 7px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; }
-  button:hover { background: #2a2d3a; color: #fff; }
+/* Summary bar */
+.summary {
+  background: var(--primary);
+  padding: 0 36px;
+  display: flex; align-items: stretch;
+}
+.sum-item {
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 13px 32px 13px 0; gap: 3px;
+}
+.sum-item + .sum-item { border-left: 1px solid rgba(255,255,255,0.2); padding-left: 32px; }
+.sum-val { font-family: var(--mono); font-size: 20px; font-weight: 500; color: #fff; line-height: 1; }
+.sum-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: rgba(255,255,255,0.55); }
+.sum-updated { margin-left: auto; font-family: var(--mono); font-size: 10px; color: rgba(255,255,255,0.35); align-self: center; }
 
-  /* tile panels grid */
-  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  .tile-panel { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 14px; padding: 20px; }
-  .tile-panel.active { border-color: #4f8ef7; }
-  .tile-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-  .tile-name { font-size: 16px; font-weight: 700; color: #fff; }
-  .tile-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; flex-shrink: 0; }
-  .tile-dot.on { background: #3ecf8e; box-shadow: 0 0 6px #3ecf8e; }
+/* Grid */
+.content { padding: 28px 36px 48px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 
-  /* mini stat cards inside each panel */
-  .mini-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
-  .mini-card { background: #12141c; border: 1px solid #1e2030; border-radius: 10px; padding: 14px; }
-  .mini-card .label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #555; margin-bottom: 6px; }
-  .mini-card .value { font-size: 26px; font-weight: 700; color: #fff; }
-  .mini-card .sub   { font-size: 11px; color: #444; margin-top: 4px; }
-  .mini-card.blue  .value { color: #4f8ef7; }
-  .mini-card.green .value { color: #3ecf8e; }
+/* Card */
+.tile-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 2px 3px 6px var(--shadow);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.card-top {
+  padding: 15px 20px 13px; display: flex; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--muted);
+}
+.tile-eyebrow { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--fg-muted); }
+.tile-title { font-family: var(--display); font-size: 17px; font-weight: 600; color: var(--fg); margin-top: 2px; }
+.tile-status { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px; color: var(--fg-muted); }
+.tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); transition: background 0.4s; }
+.tdot.on { background: var(--primary); box-shadow: 0 0 0 2px rgba(166,124,82,0.2); animation: breathe 2.5s ease-in-out infinite; }
 
-  /* canvas */
-  canvas { width: 100%; display: block; border-radius: 8px; }
+/* Body */
+.card-body { padding: 18px 20px 14px; }
+.big-row { display: flex; align-items: flex-end; gap: 28px; margin-bottom: 16px; }
+.big-num { font-family: var(--mono); font-size: 58px; font-weight: 500; line-height: 1; color: var(--fg); letter-spacing: -0.03em; }
+.big-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--fg-muted); margin-top: 5px; }
+.side-stats { display: flex; flex-direction: column; gap: 11px; padding-bottom: 4px; }
+.side-val { font-family: var(--mono); font-size: 15px; font-weight: 500; color: var(--fg); line-height: 1; }
+.side-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--fg-muted); margin-top: 2px; }
 
-  .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #555; margin-bottom: 10px; }
+/* Chart */
+.chart-eyebrow { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 7px; }
+canvas { width: 100%; display: block; }
 
-  /* table */
-  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 16px; }
-  th { text-align: left; padding: 6px 10px; color: #444; font-weight: 500;
-       border-bottom: 1px solid #1e2030; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-  td { padding: 7px 10px; border-bottom: 1px solid #161820; color: #bbb; }
-  td:first-child { color: #777; font-size: 11px; }
-  .badge { display: inline-block; padding: 2px 7px; border-radius: 20px; font-size: 10px; font-weight: 600; }
-  .badge.ab { background: #1a3a5c; color: #4f8ef7; }
-  .badge.ba { background: #1a3a20; color: #3ecf8e; }
-
-  .empty { color: #333; text-align: center; padding: 28px; font-size: 13px; }
+/* Table */
+.card-table { border-top: 1px solid var(--muted); }
+table { width: 100%; border-collapse: collapse; }
+th {
+  padding: 10px 20px 8px; text-align: left;
+  font-family: var(--mono); font-size: 10px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--accent); border-bottom: 1px solid var(--border);
+}
+td { padding: 8px 20px; font-family: var(--mono); font-size: 12px; color: var(--fg-muted); border-bottom: 1px solid var(--muted); }
+tr:last-child td { border-bottom: none; }
+td.num { color: var(--fg); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: 0.04em; }
+.badge.ab { background: #f0ebe0; color: var(--primary); border: 1px solid var(--border); }
+.badge.ba { background: #e8e0d4; color: #7a5c3a; border: 1px solid #d0c4b0; }
+.empty-row td { text-align: center; font-style: italic; color: var(--accent); padding: 22px; border: none; }
 </style>
 </head>
 <body>
 
-<h1>Piezolytics</h1>
-<p class="subtitle">Live floor sensor analytics</p>
+<header class="header">
+  <div>
+    <div class="logo">Piezo<em>lytics</em></div>
+    <div class="tagline">Live floor sensor analytics</div>
+  </div>
+  <div class="header-right">
+    <div class="live-pill">
+      <div class="live-dot" id="live-dot"></div>
+      <span id="live-text">connecting</span>
+    </div>
+    <button class="btn" onclick="clearData()">Clear</button>
+    <button class="btn" onclick="fetchData()">Refresh</button>
+  </div>
+</header>
 
-<div class="toolbar">
-  <div class="dot" id="dot"></div>
-  <span class="status-text" id="status">Connecting...</span>
-  <button onclick="clearData()">Clear data</button>
-  <button onclick="fetchData()">Refresh</button>
+<div class="summary">
+  <div class="sum-item">
+    <div class="sum-val" id="s-total">—</div>
+    <div class="sum-lbl">Total visits</div>
+  </div>
+  <div class="sum-item">
+    <div class="sum-val" id="s-tiles">—</div>
+    <div class="sum-lbl">Active tiles</div>
+  </div>
+  <div class="sum-item">
+    <div class="sum-val" id="s-top">—</div>
+    <div class="sum-lbl">Most active</div>
+  </div>
+  <div class="sum-updated" id="s-time"></div>
 </div>
 
-<div class="tiles" id="tile-grid"></div>
+<div class="content">
+  <div class="grid" id="grid"></div>
+</div>
 
 <script>
 const TILES = [
-  { key: "tile_1", label: "Tile 1" },
-  { key: "tile_2", label: "Tile 2" },
-  { key: "tile_3", label: "Tile 3" },
-  { key: "tile_4", label: "Tile 4" },
+  { key: "tile_1", label: "Tile 1", n: "01" },
+  { key: "tile_2", label: "Tile 2", n: "02" },
+  { key: "tile_3", label: "Tile 3", n: "03" },
+  { key: "tile_4", label: "Tile 4", n: "04" },
 ];
 
-// build panels on load
 TILES.forEach(t => {
-  const id = t.key.replace("_", "");
-  document.getElementById("tile-grid").innerHTML += `
-  <div class="tile-panel" id="panel-${id}">
-    <div class="tile-header">
-      <div class="tile-dot" id="tdot-${id}"></div>
-      <span class="tile-name">${t.label}</span>
-    </div>
-    <div class="mini-cards">
-      <div class="mini-card blue">
-        <div class="label">Visits</div>
-        <div class="value" id="${id}-total">—</div>
-        <div class="sub">confirmed</div>
+  const id = t.key.replace("_","");
+  document.getElementById("grid").innerHTML += `
+  <div class="tile-card">
+    <div class="card-top">
+      <div>
+        <div class="tile-eyebrow">Sensor ${t.n}</div>
+        <div class="tile-title">${t.label}</div>
       </div>
-      <div class="mini-card green">
-        <div class="label">Avg Peak A</div>
-        <div class="value" id="${id}-peak">—</div>
-        <div class="sub">ADC units</div>
+      <div class="tile-status">
+        <div class="tdot" id="tdot-${id}"></div>
+        <span id="ttime-${id}">no data</span>
       </div>
     </div>
-    <div class="section-label">Recent visits</div>
-    <canvas id="c-${id}" height="80"></canvas>
-    <table>
-      <thead><tr><th>Time</th><th>Order</th><th>Peak A</th><th>Dwell A</th><th>Peak B</th><th>Dwell B</th></tr></thead>
-      <tbody id="tb-${id}"></tbody>
-    </table>
+    <div class="card-body">
+      <div class="big-row">
+        <div>
+          <div class="big-num" id="${id}-total">—</div>
+          <div class="big-lbl">visits</div>
+        </div>
+        <div class="side-stats">
+          <div>
+            <div class="side-val" id="${id}-peak">—</div>
+            <div class="side-lbl">Avg peak A</div>
+          </div>
+          <div>
+            <div class="side-val" id="${id}-last">—</div>
+            <div class="side-lbl">Last visit</div>
+          </div>
+        </div>
+      </div>
+      <div class="chart-eyebrow">Activity</div>
+      <canvas id="c-${id}" height="52"></canvas>
+    </div>
+    <div class="card-table">
+      <table>
+        <thead><tr><th>Time</th><th>Order</th><th>Peak A</th><th>Dwell A</th></tr></thead>
+        <tbody id="tb-${id}"></tbody>
+      </table>
+    </div>
   </div>`;
 });
 
@@ -265,94 +374,108 @@ function fetchData() {
       const visits = rows.filter(r => r.event_type === "VISIT");
       TILES.forEach(t => renderTile(t, visits.filter(v => v.tile_id === t.key)));
 
-      const dot = document.getElementById("dot");
-      const anyData = visits.length > 0;
-      dot.style.background = anyData ? "#3ecf8e" : "#555";
-      dot.style.boxShadow  = anyData ? "0 0 6px #3ecf8e" : "none";
-      document.getElementById("status").textContent =
-        `${visits.length} total visit(s) — updated ${new Date().toLocaleTimeString()}`;
+      const counts  = TILES.map(t => visits.filter(v => v.tile_id === t.key).length);
+      const active  = counts.filter(c => c > 0).length;
+      const topIdx  = counts.indexOf(Math.max(...counts));
+      const topLbl  = counts[topIdx] > 0 ? TILES[topIdx].label : "—";
+
+      document.getElementById("s-total").textContent = visits.length || "—";
+      document.getElementById("s-tiles").textContent = active || "—";
+      document.getElementById("s-top").textContent   = topLbl;
+      document.getElementById("s-time").textContent  =
+        "updated " + new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+
+      const dot = document.getElementById("live-dot");
+      const txt = document.getElementById("live-text");
+      if (visits.length > 0) { dot.classList.add("on"); txt.textContent = "live"; }
+      else { dot.classList.remove("on"); txt.textContent = "no data"; }
     })
     .catch(() => {
-      document.getElementById("status").textContent = "Connection error";
-      document.getElementById("dot").style.background = "#e05252";
+      document.getElementById("live-text").textContent = "error";
+      document.getElementById("live-dot").style.background = "#b54a35";
     });
 }
 
 function renderTile(t, visits) {
-  const id = t.key.replace("_", "");
+  const id    = t.key.replace("_","");
   const total = visits.length;
+  const tdot  = document.getElementById("tdot-"+id);
+  const ttime = document.getElementById("ttime-"+id);
 
-  const tdot = document.getElementById("tdot-" + id);
-  if (total > 0) { tdot.classList.add("on"); } else { tdot.classList.remove("on"); }
+  if (total > 0) {
+    tdot.classList.add("on");
+    ttime.textContent = (visits[visits.length-1].ts||"").split(" ")[1] || "—";
+  } else {
+    tdot.classList.remove("on");
+    ttime.textContent = "no data";
+  }
 
   const avgPeak = total
-    ? Math.round(visits.reduce((acc, v) => acc + (v.tile_a_peak || 0), 0) / total)
-    : "—";
-  document.getElementById(id + "-total").textContent = total || "—";
-  document.getElementById(id + "-peak").textContent  = avgPeak;
+    ? Math.round(visits.reduce((s,v) => s+(v.tile_a_peak||0), 0) / total) : "—";
+  const lastTime = total ? ((visits[visits.length-1].ts||"").split(" ")[1]||"—") : "—";
 
-  drawSparkline(document.getElementById("c-" + id), visits);
+  document.getElementById(id+"-total").textContent = total || "—";
+  document.getElementById(id+"-peak").textContent  = avgPeak;
+  document.getElementById(id+"-last").textContent  = lastTime;
 
-  const tbody = document.getElementById("tb-" + id);
-  const recent = [...visits].reverse().slice(0, 10);
+  drawSparkline(document.getElementById("c-"+id), visits);
+
+  const tbody  = document.getElementById("tb-"+id);
+  const recent = [...visits].reverse().slice(0,6);
   if (!recent.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">No data yet</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No visits yet</td></tr>';
     return;
   }
-  tbody.innerHTML = recent.map(v => {
-    const order = v.first_tile === 1
-      ? '<span class="badge ab">A→B</span>'
-      : '<span class="badge ba">B→A</span>';
-    return `<tr>
-      <td>${(v.ts || "").split(" ")[1] || "—"}</td>
-      <td>${order}</td>
-      <td>${v.tile_a_peak ?? "—"}</td>
-      <td>${v.tile_a_dwell_ms ?? "—"}ms</td>
-      <td>${v.tile_b_peak ?? "—"}</td>
-      <td>${v.tile_b_dwell_ms ?? "—"}ms</td>
-    </tr>`;
-  }).join("");
+  tbody.innerHTML = recent.map(v => `<tr>
+    <td>${(v.ts||"").split(" ")[1]||"—"}</td>
+    <td>${v.first_tile===1
+      ? '<span class="badge ab">A → B</span>'
+      : '<span class="badge ba">B → A</span>'}</td>
+    <td class="num">${v.tile_a_peak??"—"}</td>
+    <td class="num">${v.tile_a_dwell_ms???"—"}ms</td>
+  </tr>`).join("");
 }
 
 function drawSparkline(canvas, visits) {
-  canvas.width  = canvas.offsetWidth;
-  canvas.height = 80;
+  canvas.width  = canvas.offsetWidth || 400;
+  canvas.height = 52;
   const ctx = canvas.getContext("2d");
   const w = canvas.width, h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
+  ctx.clearRect(0,0,w,h);
 
-  if (visits.length < 2) {
-    ctx.fillStyle = "#222";
-    ctx.font = "12px sans-serif";
+  if (!visits.length) {
+    ctx.fillStyle = "#d4c8aa";
+    ctx.font = "11px 'IBM Plex Mono',monospace";
     ctx.textAlign = "center";
-    ctx.fillText(visits.length === 0 ? "No data yet" : "Need more data", w / 2, h / 2 + 4);
+    ctx.fillText("no activity yet", w/2, h/2+4);
     return;
   }
 
   const t0   = visits[0].epoch;
-  const tEnd = visits[visits.length - 1].epoch;
-  const span = Math.max(tEnd - t0, 60);
-  const B = 16;
+  const tEnd = visits[visits.length-1].epoch;
+  const span = Math.max(tEnd-t0, 60);
+  const B    = 24;
   const counts = Array(B).fill(0);
-  visits.forEach(v => {
-    const idx = Math.min(Math.floor((v.epoch - t0) / (span / B)), B - 1);
-    counts[idx]++;
-  });
-  const mx = Math.max(...counts, 1);
-  const bw = w / B;
-  counts.forEach((c, i) => {
-    const bh = (c / mx) * (h - 16);
-    ctx.fillStyle = c > 0 ? "#4f8ef7" : "#161820";
-    ctx.beginPath();
-    ctx.roundRect(i * bw + 2, h - bh - 8, bw - 4, bh, 3);
-    ctx.fill();
+  visits.forEach(v => { counts[Math.min(Math.floor((v.epoch-t0)/(span/B)),B-1)]++; });
+  const mx = Math.max(...counts,1);
+  const bw = w/B;
+  counts.forEach((c,i) => {
+    const bh = Math.max((c/mx)*(h-6), c>0?3:0);
+    if (c===0) {
+      ctx.fillStyle = "#ece5d8";
+      ctx.fillRect(i*bw+2, h-3, bw-4, 2);
+    } else {
+      const g = ctx.createLinearGradient(0,h-bh-3,0,h-3);
+      g.addColorStop(0,"#a67c52"); g.addColorStop(1,"#c9a97a");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.roundRect(i*bw+2, h-bh-3, bw-4, bh, 2);
+      ctx.fill();
+    }
   });
 }
 
-function clearData() {
-  fetch("/clear").then(fetchData);
-}
-
+function clearData() { fetch("/clear").then(fetchData); }
 fetchData();
 setInterval(fetchData, 2000);
 </script>
