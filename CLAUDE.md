@@ -9,7 +9,7 @@ Arduino Nano reads piezo sensor(s) over USB Serial → Python server stores read
 
 ## Dependencies
 ```bash
-pip3 install pyserial
+pip3 install pyserial websockets
 ```
 
 ## Hardware

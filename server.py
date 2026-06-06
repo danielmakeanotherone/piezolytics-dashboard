@@ -3,18 +3,20 @@
 Piezo serial server — reads JSON from Arduino Nano over USB, serves live dashboard.
 
 Dependencies:
-  pip3 install pyserial
+  pip3 install pyserial websockets
 
 Usage:
   python3 server.py                        # auto-detect serial port
   python3 server.py /dev/tty.usbmodem14101 # specify port explicitly
 
 Endpoints:
-  GET  /       — live dashboard (auto-refreshes every 2s)
+  GET  /       — live dashboard
   GET  /data   — all stored readings as JSON
   GET  /clear  — wipe stored data
+  WS   :8081   — real-time push (new readings broadcast to all clients)
 """
 
+import asyncio
 import json
 import sys
 import time
@@ -25,11 +27,90 @@ from collections import deque
 from datetime import datetime
 
 PORT         = 8080
+WS_PORT      = 8081
 BAUD_RATE    = 115200
 MAX_READINGS = 200
 
 readings: deque = deque(maxlen=MAX_READINGS)
 readings_lock   = threading.Lock()
+
+# ----------------------------------------------------------------- websocket
+
+ws_clients: set = set()
+ws_loop: asyncio.AbstractEventLoop = None
+
+
+async def _ws_handler(websocket):
+    ws_clients.add(websocket)
+    try:
+        with readings_lock:
+            data = list(readings)
+        await websocket.send(json.dumps({"type": "init", "data": data}))
+        await websocket.wait_closed()
+    except Exception:
+        pass
+    finally:
+        ws_clients.discard(websocket)
+
+
+async def _heartbeat():
+    """Send a keepalive message every 25 s so TCP never goes idle."""
+    msg = json.dumps({"type": "heartbeat"})
+    while True:
+        await asyncio.sleep(25)
+        gone = set()
+        for ws in ws_clients.copy():
+            try:
+                await ws.send(msg)
+            except Exception:
+                gone.add(ws)
+        ws_clients -= gone
+
+
+def ws_broadcast(entry: dict):
+    """Push a single new entry to all connected browsers (thread-safe)."""
+    if not ws_loop or not ws_clients:
+        return
+
+    async def _send():
+        msg  = json.dumps({"type": "new", "data": entry})
+        gone = set()
+        for ws in ws_clients.copy():
+            try:
+                await ws.send(msg)
+            except Exception:
+                gone.add(ws)
+        ws_clients -= gone
+
+    asyncio.run_coroutine_threadsafe(_send(), ws_loop)
+
+
+def _start_ws_server():
+    global ws_loop
+    ws_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(ws_loop)
+
+    async def _run():
+        try:
+            import websockets
+        except ImportError:
+            print("ERROR: websockets not installed — run: pip3 install websockets")
+            return
+        # ping_interval=None — disable the library's strict ping/pong so browsers
+        # are never forcibly disconnected. Keepalive is handled by _heartbeat().
+        async with websockets.serve(
+            _ws_handler, "0.0.0.0", WS_PORT,
+            ping_interval=None,
+        ):
+            print(f"WebSocket server ready on ws://0.0.0.0:{WS_PORT}")
+            await _heartbeat()  # runs forever
+
+    while True:
+        try:
+            ws_loop.run_until_complete(_run())
+        except Exception as e:
+            print(f"[WS] crashed ({e}) — restarting in 2s...")
+            time.sleep(2)
 
 
 # ----------------------------------------------------------------- serial
@@ -89,6 +170,7 @@ def serial_reader(port):
         }
         with readings_lock:
             readings.append(entry)
+        ws_broadcast(entry)
 
 
 # ----------------------------------------------------------------- HTTP
@@ -115,6 +197,7 @@ class Handler(BaseHTTPRequestHandler):
             }
             with readings_lock:
                 readings.append(entry)
+            ws_broadcast(entry)
             self._send(200, "application/json", b'{"ok":true}')
         else:
             self._send(404, "text/plain", b"Not found")
@@ -727,8 +810,82 @@ function fetchData() {
 }
 
 function clearData() { fetch('/clear').then(fetchData); }
-fetchData();
-setInterval(fetchData, 2000);
+
+// ── WebSocket ──────────────────────────────────────────────────────────
+let _ws      = null;
+let _wsRetry = 1000;
+let allVisits = [];
+
+function setConnected(ok) {
+  const dot = document.getElementById('live-dot');
+  const txt = document.getElementById('live-text');
+  if (ok) { dot.classList.add('on'); txt.textContent = 'live'; }
+  else    { dot.classList.remove('on'); txt.textContent = 'reconnecting…'; }
+}
+
+function connectWS() {
+  const host = location.hostname || 'localhost';
+  _ws = new WebSocket('ws://' + host + ':8081');
+  _ws.onopen  = () => { _wsRetry = 1000; setConnected(true); };
+  _ws.onclose = () => {
+    setConnected(false);
+    setTimeout(connectWS, _wsRetry);
+    _wsRetry = Math.min(_wsRetry * 1.5, 15000);
+  };
+  _ws.onerror = () => _ws.close();
+  _ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if      (msg.type === 'init') processRows(msg.data);
+    else if (msg.type === 'new')  processNewRow(msg.data);
+    // heartbeat: ignore
+  };
+}
+
+function processRows(rows) {
+  const visits = rows.filter(r => r.event_type === 'VISIT');
+  Object.keys(tileMap).forEach(id => { tileMap[id].visits = []; });
+  visits.forEach(v => { ensureTile(v.tile_id); tileMap[v.tile_id].visits.push(v); });
+  allVisits = visits;
+  Object.keys(tileMap).forEach(id => {
+    const el = document.getElementById('t3d-cnt-' + id);
+    if (el) el.textContent = tileMap[id].visits.length;
+  });
+  Object.keys(tileMap).forEach(renderZone);
+  updateStats();
+}
+
+function processNewRow(row) {
+  if (row.event_type !== 'VISIT') return;
+  ensureTile(row.tile_id);
+  tileMap[row.tile_id].visits.push(row);
+  allVisits.push(row);
+  pushFeed(row);
+  pressTile(row.tile_id);
+  const el = document.getElementById('t3d-cnt-' + row.tile_id);
+  if (el) el.textContent = tileMap[row.tile_id].visits.length;
+  renderZone(row.tile_id);
+  updateStats();
+}
+
+function updateStats() {
+  const visits     = allVisits;
+  const activeTiles = Object.values(tileMap).filter(t => t.visits.length > 0).length;
+  const totals     = Object.entries(tileMap).map(([id,t]) => ({id, n: t.visits.length}));
+  const top        = [...totals].sort((a,b) => b.n - a.n)[0];
+  const lastVisit  = visits.length ? (visits[visits.length-1].ts||'').split(' ')[1]||'—' : '—';
+  document.getElementById('s-total').textContent = visits.length || '—';
+  document.getElementById('s-tiles').textContent = activeTiles  || '—';
+  document.getElementById('s-top').textContent   = top && top.n > 0 ? tileMap[top.id].label : '—';
+  document.getElementById('s-last').textContent  = lastVisit;
+  document.getElementById('s-time').textContent  =
+    'updated ' + new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function fetchData() {
+  fetch('/data').then(r => r.json()).then(rows => processRows(rows)).catch(() => {});
+}
+
+connectWS();
 </script>
 </body>
 </html>"""
@@ -740,20 +897,30 @@ if __name__ == "__main__":
     port_arg = sys.argv[1] if len(sys.argv) > 1 else None
     serial_port = port_arg or find_serial_port()
 
+    # WebSocket server in its own thread
+    ws_thread = threading.Thread(target=_start_ws_server, daemon=True)
+    ws_thread.start()
+
     if serial_port:
         t = threading.Thread(target=serial_reader, args=(serial_port,), daemon=True)
         t.start()
     else:
-        print("WARNING: No serial port found. Plug in the Arduino and restart,")
-        print("  or pass the port as an argument: python3 server.py /dev/tty.usbmodemXXXX")
+        print("WARNING: No serial port found. Running in HTTP-only mode.")
+        print("  Plug in the Arduino or pass the port: python3 server.py /dev/tty.usbmodemXXXX")
 
     import socket
     local_ip = socket.gethostbyname(socket.gethostname())
-    print(f"Server running on http://{local_ip}:{PORT}/")
-    print("Press Ctrl+C to stop.\n")
+    print(f"HTTP server  → http://{local_ip}:{PORT}/")
+    print(f"WebSocket    → ws://{local_ip}:{WS_PORT}")
 
     server = HTTPServer(("0.0.0.0", PORT), Handler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopped.")
+    print("Press Ctrl+C to stop.\n")
+    while True:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nStopped.")
+            break
+        except Exception as e:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Server error: {e} — restarting in 1s...")
+            time.sleep(1)
