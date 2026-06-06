@@ -92,6 +92,9 @@ def _start_ws_server():
         print("ERROR: websockets not installed — run: pip3 install websockets")
         return
 
+    import logging
+    logging.getLogger("websockets").setLevel(logging.CRITICAL)
+
     global ws_loop
 
     while True:
