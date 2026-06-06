@@ -86,30 +86,40 @@ def ws_broadcast(entry: dict):
 
 
 def _start_ws_server():
-    global ws_loop
-    ws_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(ws_loop)
+    try:
+        import websockets
+    except ImportError:
+        print("ERROR: websockets not installed — run: pip3 install websockets")
+        return
 
-    async def _run():
-        try:
-            import websockets
-        except ImportError:
-            print("ERROR: websockets not installed — run: pip3 install websockets")
-            return
-        # ping_interval=None — disable the library's strict ping/pong so browsers
-        # are never forcibly disconnected. Keepalive is handled by _heartbeat().
-        async with websockets.serve(
-            _ws_handler, "0.0.0.0", WS_PORT,
-            ping_interval=None,
-        ):
-            print(f"WebSocket server ready on ws://0.0.0.0:{WS_PORT}")
-            await _heartbeat()  # runs forever
+    global ws_loop
 
     while True:
         try:
-            ws_loop.run_until_complete(_run())
+            # Fresh loop every restart — reusing a crashed loop is unreliable
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            ws_loop = loop
+            ws_clients.clear()  # dead sockets from old loop must not carry over
+
+            async def _run():
+                # ping_interval=None — keepalive handled by _heartbeat() instead
+                async with websockets.serve(
+                    _ws_handler, "0.0.0.0", WS_PORT,
+                    ping_interval=None,
+                    max_size=2**20,  # 1 MB cap per message
+                ):
+                    print(f"WebSocket server ready on ws://0.0.0.0:{WS_PORT}")
+                    await _heartbeat()  # runs forever
+
+            loop.run_until_complete(_run())
         except Exception as e:
             print(f"[WS] crashed ({e}) — restarting in 2s...")
+            try:
+                ws_loop.close()
+            except Exception:
+                pass
+            ws_loop = None
             time.sleep(2)
 
 
@@ -812,9 +822,10 @@ function fetchData() {
 function clearData() { fetch('/clear').then(fetchData); }
 
 // ── WebSocket ──────────────────────────────────────────────────────────
-let _ws      = null;
-let _wsRetry = 1000;
-let allVisits = [];
+let _ws         = null;
+let _wsRetry    = 1000;
+let _wsTimer    = null;
+let allVisits   = [];
 
 function setConnected(ok) {
   const dot = document.getElementById('live-dot');
@@ -824,15 +835,26 @@ function setConnected(ok) {
 }
 
 function connectWS() {
+  // Don't stack connections — bail if one is already open or connecting
+  if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) return;
+
   const host = location.hostname || 'localhost';
   _ws = new WebSocket('ws://' + host + ':8081');
-  _ws.onopen  = () => { _wsRetry = 1000; setConnected(true); };
+
+  _ws.onopen = () => {
+    _wsRetry = 1000;
+    setConnected(true);
+  };
+
   _ws.onclose = () => {
     setConnected(false);
-    setTimeout(connectWS, _wsRetry);
-    _wsRetry = Math.min(_wsRetry * 1.5, 15000);
+    clearTimeout(_wsTimer);
+    _wsTimer = setTimeout(connectWS, _wsRetry);
+    _wsRetry = Math.min(_wsRetry * 1.5, 3000);  // cap at 3s for demo
   };
+
   _ws.onerror = () => _ws.close();
+
   _ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if      (msg.type === 'init') processRows(msg.data);
@@ -840,6 +862,17 @@ function connectWS() {
     // heartbeat: ignore
   };
 }
+
+// Reconnect immediately when the tab comes back into focus
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    if (!_ws || _ws.readyState === WebSocket.CLOSED || _ws.readyState === WebSocket.CLOSING) {
+      clearTimeout(_wsTimer);
+      _wsRetry = 1000;
+      connectWS();
+    }
+  }
+});
 
 function processRows(rows) {
   const visits = rows.filter(r => r.event_type === 'VISIT');
